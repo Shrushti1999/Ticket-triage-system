@@ -33,7 +33,7 @@ This project implements an intelligent customer support ticket triage system usi
 
 ```bash
 # Clone the repository
-git clone <github url>
+git clone https://github.com/Shrushti1999/Ticket-triage-system
 cd Ticket-triage-system
 
 # Install dependencies
@@ -176,7 +176,22 @@ Invoke-RestMethod `
     feedback  = "Looks good"
   } | ConvertTo-Json)
 ```
-
+**Response (Approve):**
+```json
+{
+  "ticket_id": "abc12345",
+  "order_id": "ORD1001",
+  "issue_type": "refund_request",
+  "recommendation": "Hi Ava Chen, we are sorry for the inconvenience...",
+  "status": "completed",
+  "order": {
+    "order_id": "ORD1001",
+    "customer_name": "Ava Chen",
+    "email": "ava.chen@example.com"
+  },
+  "message": "Ticket approved by admin. Feedback: Looks good"
+}
+```
 **Reject:**
 ```bash
 curl -X POST http://localhost:8000/triage/review \ `
@@ -194,6 +209,22 @@ Invoke-RestMethod `
     decision  = "reject"
     feedback  = "Offer discount"
   } | ConvertTo-Json)
+```
+**Response (Reject):**
+```json
+{
+  "ticket_id": "abc12345",
+  "order_id": "ORD1001",
+  "issue_type": "refund_request",
+  "recommendation": "Hi Ava Chen, we are sorry for the inconvenience...",
+  "status": "completed",
+  "order": {
+    "order_id": "ORD1001",
+    "customer_name": "Ava Chen",
+    "email": "ava.chen@example.com"
+  },
+  "message": "Ticket rejected by admin. Feedback: Offer discount"
+}
 ```
 
 ### Step 4: Customer submits ticket without order_id
@@ -358,6 +389,8 @@ Ticket-triage-system/
 ├── requirements.txt     # Python dependencies
 └── README.md            # This file
 ```
+## 📷 Loom Video
+https://www.loom.com/share/8fb6eb26d4b34036bf74987c9ab6a274
 
 ## 🛠️ Built With
 

@@ -1,0 +1,15 @@
+[
+  "tests/test_graph.py::TestGraphStructure::test_graph_can_be_invoked",
+  "tests/test_graph.py::TestGraphStructure::test_graph_is_compiled",
+  "tests/test_graph.py::TestTriageGraphWorkflow::test_workflow_reply_contains_customer_name",
+  "tests/test_graph.py::TestTriageGraphWorkflow::test_workflow_reply_contains_order_id",
+  "tests/test_graph.py::TestTriageGraphWorkflow::test_workflow_state_population",
+  "tests/test_graph.py::TestTriageGraphWorkflow::test_workflow_with_different_issue_types",
+  "tests/test_graph.py::TestTriageGraphWorkflow::test_workflow_with_explicit_order_id",
+  "tests/test_graph.py::TestTriageGraphWorkflow::test_workflow_with_invalid_order_id",
+  "tests/test_graph.py::TestTriageGraphWorkflow::test_workflow_with_late_delivery_issue",
+  "tests/test_graph.py::TestTriageGraphWorkflow::test_workflow_with_missing_order_id",
+  "tests/test_graph.py::TestTriageGraphWorkflow::test_workflow_with_order_id_extraction",
+  "tests/test_graph.py::TestTriageGraphWorkflow::test_workflow_with_order_id_in_text",
+  "tests/test_graph.py::TestTriageGraphWorkflow::test_workflow_with_unknown_issue_type"
+]

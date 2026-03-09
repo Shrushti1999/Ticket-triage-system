@@ -371,39 +371,39 @@ Invoke-RestMethod `
 ```mermaid
 flowchart TD
     subgraph Customer
-        C[Customer (ticket_text, order_id)]
+        C["Customer (ticket_text, order_id)"]
     end
 
-    subgraph API[FastAPI Layer]
-        INVOKE[/POST /triage/invoke/]
-        PENDING[/GET /triage/pending/]
-        REVIEW[/POST /triage/review/]
-        HEALTH[/GET /health/]
+    subgraph API["FastAPI Layer"]
+        INVOKE["POST /triage/invoke"]
+        PENDING["GET /triage/pending"]
+        REVIEW["POST /triage/review"]
+        HEALTH["GET /health"]
     end
 
-    subgraph LangGraph[LangGraph Workflows]
-        TG[triage_graph (ingest → classify_issue → fetch_order / refund_preview → policy RAG → draft_reply → wait_for_admin_approval)]
-        AG[admin_review_graph (admin_review → finalize)]
+    subgraph LangGraph["LangGraph Workflows"]
+        TG["triage_graph (ingest → classify_issue → fetch_order / refund_preview → policy RAG → draft_reply → wait_for_admin_approval)"]
+        AG["admin_review_graph (admin_review → finalize)"]
     end
 
-    subgraph DB[Postgres + pgvector]
-        CP[(checkpoint tables / PostgresSaver)]
-        PT[(pending_tickets)]
-        POL[(policy_chunks / pgvector)]
+    subgraph DB["Postgres + pgvector"]
+        CP["checkpoint tables / PostgresSaver"]
+        PT["pending_tickets"]
+        POL["policy_chunks / pgvector"]
     end
 
-    subgraph RAG[Policy RAG]
-        KB_INDEX[app.kb_index (CLI indexer)]
-        VSTORE[app.policy_vector_store (query_policies)]
+    subgraph RAG["Policy RAG"]
+        KB_INDEX["app.kb_index (CLI indexer)"]
+        VSTORE["app.policy_vector_store (query_policies)"]
     end
 
-    subgraph Payments[Refund Flow]
-        PREVIEW[refund_preview]
-        COMMIT[refund_commit]
+    subgraph Payments["Refund Flow"]
+        PREVIEW["refund_preview"]
+        COMMIT["refund_commit"]
     end
 
-    subgraph Obs[Observability]
-        LF[Langfuse (traces, spans)]
+    subgraph Obs["Observability"]
+        LF["Langfuse (traces, spans)"]
     end
 
     C --> INVOKE --> TG

@@ -371,7 +371,7 @@ Invoke-RestMethod `
 ```mermaid
 flowchart TD
     subgraph Customer
-        C[Customer\n(ticket_text, order_id)]
+        C[Customer (ticket_text, order_id)]
     end
 
     subgraph API[FastAPI Layer]
@@ -382,19 +382,19 @@ flowchart TD
     end
 
     subgraph LangGraph[LangGraph Workflows]
-        TG[triage_graph\n(ingest → classify_issue →\nfetch_order / refund_preview →\npolicy RAG → draft_reply →\nwait_for_admin_approval)]
-        AG[admin_review_graph\n(admin_review → finalize)]
+        TG[triage_graph (ingest → classify_issue → fetch_order / refund_preview → policy RAG → draft_reply → wait_for_admin_approval)]
+        AG[admin_review_graph (admin_review → finalize)]
     end
 
     subgraph DB[Postgres + pgvector]
-        CP[(checkpoint tables\nPostgresSaver)]
+        CP[(checkpoint tables / PostgresSaver)]
         PT[(pending_tickets)]
-        POL[(policy_chunks\npgvector)]
+        POL[(policy_chunks / pgvector)]
     end
 
     subgraph RAG[Policy RAG]
-        KB_INDEX[app.kb_index\n(CLI indexer)]
-        VSTORE[app.policy_vector_store\n(query_policies)]
+        KB_INDEX[app.kb_index (CLI indexer)]
+        VSTORE[app.policy_vector_store (query_policies)]
     end
 
     subgraph Payments[Refund Flow]
@@ -403,14 +403,14 @@ flowchart TD
     end
 
     subgraph Obs[Observability]
-        LF[Langfuse\n(traces, spans)]
+        LF[Langfuse (traces, spans)]
     end
 
     C --> INVOKE --> TG
     TG -->|non-refund| AG
-    TG -->|refund_request\nstatus=awaiting_approval\nINTERRUPT| PT
+    TG -->|"refund_request / status=awaiting_approval / INTERRUPT"| PT
 
-    REVIEW -->|refund_request\nresume thread| TG
+    REVIEW -->|"refund_request / resume thread"| TG
     REVIEW -->|other issues| AG
 
     TG <-.-> CP

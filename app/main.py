@@ -48,20 +48,21 @@ async def lifespan(app: FastAPI):
         yield
 
 
-# Try to import Langfuse for tracing
+# Try to import Langfuse for tracing (use langchain integration for run trees)
 try:
-    from langfuse.callback import CallbackHandler as LangfuseCallbackHandler  # pyright: ignore[reportMissingImports]
+    from langfuse.langchain import CallbackHandler as LangfuseCallbackHandler  # pyright: ignore[reportMissingImports]
+    from langfuse import get_client as get_langfuse_client
     LANGFUSE_AVAILABLE = True
 except ImportError:
     try:
-        from langfuse import Langfuse
-        # Create a wrapper for basic tracing without callback handler
+        from langfuse import Langfuse, get_client as get_langfuse_client
         LANGFUSE_AVAILABLE = True
         LangfuseCallbackHandler = None
     except ImportError:
         LANGFUSE_AVAILABLE = False
         LangfuseCallbackHandler = None
         Langfuse = None
+        get_langfuse_client = None
 
 app = FastAPI(
     title="Ticket Triage System - Phase 1",
@@ -101,10 +102,10 @@ else:
 
 
 def get_langfuse_callback(trace_name: str, tags: Optional[list] = None):
-    """Create a Langfuse callback handler for tracing if available."""
+    """Create a Langfuse callback handler for run trees and tracing if available."""
     if not LANGFUSE_AVAILABLE or not langfuse_public_key or not langfuse_secret_key:
         return None
-    
+
     if LangfuseCallbackHandler:
         try:
             return LangfuseCallbackHandler(
@@ -112,7 +113,7 @@ def get_langfuse_callback(trace_name: str, tags: Optional[list] = None):
                 secret_key=langfuse_secret_key,
                 host=langfuse_host,
                 trace_name=trace_name,
-                tags=tags or [langfuse_environment, "triage", "langgraph"]
+                tags=tags or [langfuse_environment, "triage", "langgraph"],
             )
         except Exception as e:
             print(f"[WARN] Failed to create Langfuse callback: {e}")
@@ -166,6 +167,7 @@ class TriageResponse(BaseModel):
     status: str
     order: Optional[dict] = None
     message: Optional[str] = None
+    policy_citations: Optional[list] = None
 
 
 @app.get("/health")
@@ -253,10 +255,11 @@ def triage_invoke(body: TriageInput):
             "admin_feedback": None
         }
         
-        # Prepare config with Langfuse callback if available
+        # Prepare config with Langfuse callback for run trees and node metadata
         config = {
             "recursion_limit": 15,
             "configurable": {"thread_id": ticket_id},
+            "run_name": f"triage_{ticket_id}",
         }
         callback = get_langfuse_callback(f"triage_{ticket_id}", ["customer", "invoke"])
         if callback:
@@ -295,7 +298,8 @@ def triage_invoke(body: TriageInput):
             recommendation=recommendation,
             status=status,
             order=order,
-            message=f"Ticket processed by assistant. Awaiting admin review at POST /triage/review"
+            message=f"Ticket processed by assistant. Awaiting admin review at POST /triage/review",
+            policy_citations=evidence.get("policy_citations"),
         )
         
     except HTTPException:
@@ -353,10 +357,11 @@ def triage_review(body: AdminReviewInput):
         stored_state["admin_decision"] = body.decision.lower()
         stored_state["admin_feedback"] = body.feedback
         
-        # Prepare config with Langfuse callback if available
+        # Prepare config with Langfuse callback for run trees
         config = {
             "recursion_limit": 10,
             "configurable": {"thread_id": body.ticket_id},
+            "run_name": f"admin_review_{body.ticket_id}",
         }
         callback = get_langfuse_callback(f"admin_review_{body.ticket_id}", ["admin", "review"])
         if callback:
@@ -391,7 +396,8 @@ def triage_review(body: AdminReviewInput):
             recommendation=final_state.get("recommendation"),
             status=final_state.get("status", "completed"),
             order=evidence.get("order"),
-            message=f"Ticket {verb} by admin.{f' Feedback: {body.feedback}' if body.feedback else ''}"
+            message=f"Ticket {verb} by admin.{f' Feedback: {body.feedback}' if body.feedback else ''}",
+            policy_citations=evidence.get("policy_citations"),
         )
         
     except HTTPException:

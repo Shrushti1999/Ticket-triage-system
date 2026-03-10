@@ -18,6 +18,7 @@ from langchain_core.messages import HumanMessage, AIMessage, ToolMessage, ToolCa
 from langgraph.graph import StateGraph, END
 from langgraph.prebuilt import ToolNode
 from langgraph.types import Command, interrupt
+from app.policy_evaluator import policy_evaluator
 from app.tools import fetch_order, tools
 
 # Set up logging
@@ -272,6 +273,23 @@ def commit_refund(state: GraphState) -> GraphState:
     }
 
 
+def _langfuse_log_citation_spans(citations: list, recommendation: str) -> None:
+    """Record citation spans on the current Langfuse span for the answer node (run tree UI)."""
+    if not citations:
+        return
+    spans = [
+        {"doc_id": c.get("doc_id"), "file": c.get("file"), "snippet": (c.get("snippet") or "")[:200]}
+        for c in citations
+    ]
+    try:
+        from langfuse import get_client
+        client = get_client()
+        if hasattr(client, "update_current_span"):
+            client.update_current_span(metadata={"citation_spans": spans, "answer_length": len(recommendation)})
+    except Exception:
+        pass
+
+
 def draft_reply(state: GraphState) -> GraphState:
     """
     ASSISTANT node: Drafts a reply recommendation based on issue type and order data.
@@ -328,6 +346,9 @@ def draft_reply(state: GraphState) -> GraphState:
             content=f"[ASSISTANT RECOMMENDATION]\nIssue Type: {issue_type}\nDraft Reply: {reply_text}\n\nAwaiting admin review..."
         ))
         
+        # Observability: record citation spans on answer node for run tree UI (when citations exist in evidence)
+        _langfuse_log_citation_spans(evidence.get("policy_citations") or [], reply_text)
+
         # Return updated state with recommendation and awaiting_admin status
         updated_state = {
             **state,
@@ -513,7 +534,8 @@ def create_triage_graph(checkpointer=None):
 
         # After drafting a reply, propose a remedy and pause for admin approval.
         workflow.add_edge("draft_reply", "propose_remedy")
-        workflow.add_edge("propose_remedy", "commit_refund")
+        workflow.add_edge("propose_remedy", "policy_evaluator")
+        workflow.add_edge("policy_evaluator", "commit_refund")
         workflow.add_edge("commit_refund", END)
         
         # Compile the graph

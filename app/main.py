@@ -14,6 +14,7 @@ from typing import Optional
 from fastapi import FastAPI, HTTPException, Query, Request
 from langchain_core.messages import HumanMessage
 from langgraph.checkpoint.postgres import PostgresSaver
+from langgraph.types import Command
 from pydantic import BaseModel
 
 from app.graph import create_triage_graph, create_admin_review_graph
@@ -361,14 +362,23 @@ def triage_review(body: AdminReviewInput):
         if callback:
             config["callbacks"] = [callback]
         
-        # Invoke the admin review graph
-        graph = getattr(app.state, "admin_review_graph", None)
-        if graph is None:
-            raise HTTPException(status_code=500, detail="Admin review graph is not initialized.")
-        final_state = graph.invoke(stored_state, config=config)
-        
-        # Remove from pending (completed)
-        store.delete(body.ticket_id)
+        triage_status = stored_state.get("status")
+
+        # For refund tickets in awaiting_approval, resume the main triage graph.
+        if triage_status == "awaiting_approval":
+            # Resume the interrupted triage graph so that commit_refund runs.
+            final_state = triage.invoke(
+                Command(resume=body.decision.lower()),
+                config=config,
+            )
+            store.delete(body.ticket_id)
+        else:
+            # Fallback to existing admin review graph for non-refund flows.
+            graph = getattr(app.state, "admin_review_graph", None)
+            if graph is None:
+                raise HTTPException(status_code=500, detail="Admin review graph is not initialized.")
+            final_state = graph.invoke(stored_state, config=config)
+            store.delete(body.ticket_id)
         
         # Extract results
         evidence = final_state.get("evidence") or {}
@@ -381,7 +391,7 @@ def triage_review(body: AdminReviewInput):
             recommendation=final_state.get("recommendation"),
             status=final_state.get("status", "completed"),
             order=evidence.get("order"),
-            message=f"Ticket {verb}d by admin.{f' Feedback: {body.feedback}' if body.feedback else ''}"
+            message=f"Ticket {verb} by admin.{f' Feedback: {body.feedback}' if body.feedback else ''}"
         )
         
     except HTTPException:

@@ -52,3 +52,4 @@ class GraphState(TypedDict):
     status: Optional[str]
     admin_decision: Optional[str]
     admin_feedback: Optional[str]
+    refund_preview: Optional[Dict[str, Any]]

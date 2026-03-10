@@ -11,10 +11,13 @@ import logging
 import os
 import re
 from typing import Literal
+
+from app import payment as payments
 from app.state import GraphState
 from langchain_core.messages import HumanMessage, AIMessage, ToolMessage, ToolCall
-from langgraph.prebuilt import ToolNode
 from langgraph.graph import StateGraph, END
+from langgraph.prebuilt import ToolNode
+from langgraph.types import Command, interrupt
 from app.tools import fetch_order, tools
 
 # Set up logging
@@ -200,6 +203,73 @@ def process_tool_result(state: GraphState) -> GraphState:
             break
     
     return {**state, "evidence": evidence}
+
+
+def propose_remedy(state: GraphState) -> GraphState:
+    """
+    ASSISTANT node: Proposes a remedy (e.g., refund) and pauses for admin approval.
+
+    Responsibilities:
+    1. Call payments.refund_preview(order_id) and store result in state.refund_preview
+    2. Set state.status = "awaiting approval from admin"
+    3. Pause the triage graph execution using langgraph interrupt so that the workflow
+       waits for admin approval.
+    """
+    order_id = state.get("order_id")
+    refund_preview = None
+
+    if order_id:
+        try:
+            refund_preview = payments.refund_preview(order_id)
+        except Exception as e:  # pragma: no cover - defensive logging
+            logger.error(f"Failed to compute refund preview for {order_id}: {e}")
+            refund_preview = {"order_id": order_id, "error": str(e)}
+
+    updated_state: GraphState = {
+        **state,
+        "refund_preview": refund_preview,
+        "status": "awaiting_approval",
+    }
+
+    # Interrupt the graph so that execution pauses and waits for admin input.
+    interrupt(
+        {
+            "type": "refund_preview_required",
+            "order_id": order_id,
+            "refund_preview": refund_preview,
+        }
+    )
+
+    return updated_state
+
+
+def commit_refund(state: GraphState) -> GraphState:
+    """
+    ADMIN/ASSISTANT node: Commits a refund after admin approval.
+
+    Responsibilities:
+    1. Read approval decision from state (admin_decision).
+    2. If approved, call payments.refund_commit(order_id).
+    3. Set state.status = "completed".
+    """
+    admin_decision = (state.get("admin_decision") or "").lower()
+    order_id = state.get("order_id")
+    evidence = state.get("evidence") or {}
+
+    if admin_decision == "approve" and order_id:
+        try:
+            refund_result = payments.refund_commit(order_id)
+            evidence["refund"] = refund_result
+            logger.info(f"Refund committed for order {order_id}")
+        except Exception as e:  # pragma: no cover - defensive
+            logger.error(f"Failed to commit refund for {order_id}: {e}")
+            evidence["refund_error"] = str(e)
+
+    return {
+        **state,
+        "evidence": evidence,
+        "status": "completed",
+    }
 
 
 def draft_reply(state: GraphState) -> GraphState:
@@ -407,6 +477,8 @@ def create_triage_graph(checkpointer=None):
         workflow.add_node("prepare_tool_call", prepare_tool_call)
         workflow.add_node("fetch_order", tool_node)  # Using ToolNode as required
         workflow.add_node("process_tool_result", process_tool_result)
+        workflow.add_node("propose_remedy", propose_remedy)
+        workflow.add_node("commit_refund", commit_refund)
         workflow.add_node("draft_reply", draft_reply)
         
         # Admin nodes
@@ -438,10 +510,11 @@ def create_triage_graph(checkpointer=None):
         
         # process_tool_result -> draft_reply
         workflow.add_edge("process_tool_result", "draft_reply")
-        
-        # draft_reply -> END (pause for admin review)
-        # The graph pauses here, waiting for admin input via /triage/review
-        workflow.add_edge("draft_reply", END)
+
+        # After drafting a reply, propose a remedy and pause for admin approval.
+        workflow.add_edge("draft_reply", "propose_remedy")
+        workflow.add_edge("propose_remedy", "commit_refund")
+        workflow.add_edge("commit_refund", END)
         
         # Compile the graph
         # Optionally attach a persistent checkpointer (e.g., PostgresSaver)

@@ -170,5 +170,40 @@
       "final_status": "refund_committed",
       "approval_required": true
     }
+  },
+  {
+    "conversation_id": "P2-DEMO-006",
+    "turns": [
+      {
+        "role": "user",
+        "message": "I need to cancel order ORD1007 and get a refund before it ships."
+      },
+      {
+        "role": "assistant",
+        "message": "Checking order status. Cancellation and refund preview prepared."
+      },
+      {
+        "role": "system",
+        "message": "[Approval required]"
+      },
+      {
+        "role": "assistant",
+        "message": "Approve cancellation and refund."
+      },
+      {
+        "role": "user",
+        "message": "Refund committed."
+      }
+    ],
+    "expected_outcome": {
+      "issue_type": "refund_request",
+      "order_id": "ORD1007",
+      "policy_citations": [
+        "cancellation_policy.md",
+        "refund_policy.md"
+      ],
+      "final_status": "refund_committed",
+      "approval_required": true
+    }
   }
 ]

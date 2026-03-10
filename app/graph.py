@@ -499,6 +499,7 @@ def create_triage_graph(checkpointer=None):
         workflow.add_node("fetch_order", tool_node)  # Using ToolNode as required
         workflow.add_node("process_tool_result", process_tool_result)
         workflow.add_node("propose_remedy", propose_remedy)
+        workflow.add_node("policy_evaluator", policy_evaluator)
         workflow.add_node("commit_refund", commit_refund)
         workflow.add_node("draft_reply", draft_reply)
         

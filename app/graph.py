@@ -382,7 +382,7 @@ def check_admin_decision(state: GraphState) -> Literal["finalize", "admin_review
 
 
 # Create the LangGraph workflow
-def create_triage_graph():
+def create_triage_graph(checkpointer=None):
     """
     Creates and compiles the LangGraph workflow for ticket triage.
     
@@ -444,7 +444,11 @@ def create_triage_graph():
         workflow.add_edge("draft_reply", END)
         
         # Compile the graph
-        graph = workflow.compile()
+        # Optionally attach a persistent checkpointer (e.g., PostgresSaver)
+        if checkpointer is not None:
+            graph = workflow.compile(checkpointer=checkpointer)
+        else:
+            graph = workflow.compile()
         logger.info("Triage graph compiled successfully with three-entity workflow")
         
         return graph
@@ -453,7 +457,7 @@ def create_triage_graph():
         raise
 
 
-def create_admin_review_graph():
+def create_admin_review_graph(checkpointer=None):
     """
     Creates a separate graph for admin review workflow.
     This is invoked when admin submits their decision.
@@ -471,7 +475,10 @@ def create_admin_review_graph():
         workflow.add_edge("admin_review", "finalize")
         workflow.add_edge("finalize", END)
         
-        graph = workflow.compile()
+        if checkpointer is not None:
+            graph = workflow.compile(checkpointer=checkpointer)
+        else:
+            graph = workflow.compile()
         logger.info("Admin review graph compiled successfully")
         
         return graph
@@ -480,6 +487,6 @@ def create_admin_review_graph():
         raise
 
 
-# Create and export the compiled graphs
+# Create and export the compiled graphs for non-server usage (e.g., tests)
 triage_graph = create_triage_graph()
 admin_review_graph = create_admin_review_graph()

@@ -6,13 +6,46 @@ Three-entity workflow:
 - Assistant: Automatically processes and drafts recommendation
 - Admin: POST /triage/review - Approve or reject the recommendation
 """
-from fastapi import FastAPI, HTTPException, Query
-from pydantic import BaseModel
+from contextlib import asynccontextmanager
 import json
 import os
 from typing import Optional
+
+from fastapi import FastAPI, HTTPException, Query, Request
 from langchain_core.messages import HumanMessage
-from app.graph import triage_graph, admin_review_graph
+from langgraph.checkpoint.postgres import PostgresSaver
+from pydantic import BaseModel
+
+from app.graph import create_triage_graph, create_admin_review_graph
+from app.persistence import InMemoryPendingTicketStore, PostgresPendingTicketStore, PendingTicket
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """
+    Application lifespan context.
+
+    Initializes a single PostgresSaver checkpointer and compiles graphs with it,
+    keeping them alive for the entire app lifetime.
+    """
+    dsn = os.getenv("POSTGRES_DSN", "postgresql://app:app@localhost:5432/practice")
+    if not dsn:
+        raise RuntimeError("POSTGRES_DSN environment variable must be set.")
+
+    # Initialize persistence store (Postgres) using same DSN as checkpointer
+    app.state.pending_store = PostgresPendingTicketStore(dsn)
+
+    # Use PostgresSaver as a context manager once for the app lifetime
+    with PostgresSaver.from_conn_string(dsn) as checkpointer:
+        checkpointer.setup()
+
+        # Compile graphs with this single checkpointer instance
+        app.state.checkpointer = checkpointer
+        app.state.triage_graph = create_triage_graph(checkpointer=checkpointer)
+        app.state.admin_review_graph = create_admin_review_graph(checkpointer=checkpointer)
+
+        yield
+
 
 # Try to import Langfuse for tracing
 try:
@@ -32,7 +65,8 @@ except ImportError:
 app = FastAPI(
     title="Ticket Triage System - Phase 1",
     description="Multi-agent LangGraph workflow with customer, assistant, and admin entities",
-    version="1.0.0"
+    version="1.0.0",
+    lifespan=lifespan,
 )
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -104,8 +138,8 @@ except Exception as e:
     raise RuntimeError(f"Failed to load required data files: {str(e)}")
 
 
-# In-memory storage for pending tickets (in production, use a database)
-pending_tickets = {}
+# Default in-memory storage for pending tickets (overridden in lifespan and in tests)
+pending_tickets_store: InMemoryPendingTicketStore | PostgresPendingTicketStore = InMemoryPendingTicketStore()
 
 
 # Request/Response Models
@@ -200,10 +234,10 @@ def triage_invoke(body: TriageInput):
         if not body.ticket_text or not body.ticket_text.strip():
             raise HTTPException(status_code=400, detail="ticket_text cannot be empty")
         
-        # Generate a simple ticket ID
+        # Generate a deterministic ticket ID based on ticket text and optional order_id
         import hashlib
-        import time
-        ticket_id = hashlib.md5(f"{body.ticket_text}{time.time()}".encode()).hexdigest()[:8]
+        payload = f"{body.ticket_text}|{body.order_id or ''}"
+        ticket_id = hashlib.md5(payload.encode()).hexdigest()[:8]
         
         # Create initial state for LangGraph
         initial_state = {
@@ -219,16 +253,31 @@ def triage_invoke(body: TriageInput):
         }
         
         # Prepare config with Langfuse callback if available
-        config = {"recursion_limit": 15}
+        config = {
+            "recursion_limit": 15,
+            "configurable": {"thread_id": ticket_id},
+        }
         callback = get_langfuse_callback(f"triage_{ticket_id}", ["customer", "invoke"])
         if callback:
             config["callbacks"] = [callback]
         
         # Invoke the triage graph (customer -> assistant workflow)
-        final_state = triage_graph.invoke(initial_state, config=config)
+        graph = getattr(app.state, "triage_graph", None)
+        if graph is None:
+            raise HTTPException(status_code=500, detail="Triage graph is not initialized.")
+        final_state = graph.invoke(initial_state, config=config)
         
-        # Store the state for admin review
-        pending_tickets[ticket_id] = final_state
+        # Store the ticket metadata for admin review in persistent store
+        store = getattr(app.state, "pending_store", pending_tickets_store)
+        store.upsert(
+            PendingTicket(
+                ticket_id=ticket_id,
+                status=final_state.get("status", "awaiting_admin"),
+                issue_type=final_state.get("issue_type"),
+                order_id=final_state.get("order_id"),
+                recommendation=final_state.get("recommendation"),
+            )
+        )
         
         # Extract results
         order_id = final_state.get("order_id")
@@ -272,34 +321,58 @@ def triage_review(body: AdminReviewInput):
                 detail="decision must be 'approve' or 'reject'"
             )
         
-        # Get the pending ticket
-        if body.ticket_id not in pending_tickets:
+        # Get the pending ticket from the persistent store
+        store = getattr(app.state, "pending_store", pending_tickets_store)
+        pending = store.get(body.ticket_id)
+        if pending is None:
             raise HTTPException(
                 status_code=404, 
                 detail=f"Ticket {body.ticket_id} not found. It may have already been reviewed or expired."
             )
         
-        # Get the stored state
-        stored_state = pending_tickets[body.ticket_id]
-        
+        # Load the latest state from the checkpointer using thread_id=ticket_id
+        triage = getattr(app.state, "triage_graph", None)
+        if triage is None:
+            raise HTTPException(status_code=500, detail="Triage graph is not initialized.")
+        try:
+            snapshot = triage.get_state(config={"configurable": {"thread_id": body.ticket_id}})
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to load ticket state: {str(e)}")
+
+        if snapshot is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Ticket state for {body.ticket_id} not found in checkpointer.",
+            )
+
+        # Convert StateSnapshot to a mutable dict of values
+        stored_state = dict(getattr(snapshot, "values", snapshot))
+
         # Add admin decision to state
         stored_state["admin_decision"] = body.decision.lower()
         stored_state["admin_feedback"] = body.feedback
         
         # Prepare config with Langfuse callback if available
-        config = {"recursion_limit": 10}
+        config = {
+            "recursion_limit": 10,
+            "configurable": {"thread_id": body.ticket_id},
+        }
         callback = get_langfuse_callback(f"admin_review_{body.ticket_id}", ["admin", "review"])
         if callback:
             config["callbacks"] = [callback]
         
         # Invoke the admin review graph
-        final_state = admin_review_graph.invoke(stored_state, config=config)
+        graph = getattr(app.state, "admin_review_graph", None)
+        if graph is None:
+            raise HTTPException(status_code=500, detail="Admin review graph is not initialized.")
+        final_state = graph.invoke(stored_state, config=config)
         
         # Remove from pending (completed)
-        del pending_tickets[body.ticket_id]
+        store.delete(body.ticket_id)
         
         # Extract results
         evidence = final_state.get("evidence") or {}
+        verb = "approved" if body.decision.lower() == "approve" else "rejected"
         
         return TriageResponse(
             ticket_id=body.ticket_id,
@@ -308,7 +381,7 @@ def triage_review(body: AdminReviewInput):
             recommendation=final_state.get("recommendation"),
             status=final_state.get("status", "completed"),
             order=evidence.get("order"),
-            message=f"Ticket {body.decision}d by admin.{f' Feedback: {body.feedback}' if body.feedback else ''}"
+            message=f"Ticket {verb}d by admin.{f' Feedback: {body.feedback}' if body.feedback else ''}"
         )
         
     except HTTPException:
@@ -322,13 +395,17 @@ def get_pending_tickets():
     """
     ADMIN ENDPOINT: List all tickets awaiting admin review.
     """
+    store = getattr(app.state, "pending_store", pending_tickets_store)
+    tickets = store.list_pending()
     pending_list = []
-    for ticket_id, state in pending_tickets.items():
-        pending_list.append({
-            "ticket_id": ticket_id,
-            "order_id": state.get("order_id"),
-            "issue_type": state.get("issue_type"),
-            "recommendation": state.get("recommendation"),
-            "status": state.get("status")
-        })
+    for ticket in tickets.values():
+        pending_list.append(
+            {
+                "ticket_id": ticket.ticket_id,
+                "order_id": ticket.order_id,
+                "issue_type": ticket.issue_type,
+                "recommendation": ticket.recommendation,
+                "status": ticket.status,
+            }
+        )
     return {"pending_tickets": pending_list, "count": len(pending_list)}

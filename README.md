@@ -614,6 +614,9 @@ Ticket-triage-system/
 ## 📷 Loom Video
 https://www.loom.com/share/8fb6eb26d4b34036bf74987c9ab6a274
 
+## 📷 Part2 Video
+https://drive.google.com/drive/folders/1aUGYJPzcztfH58uThrvD7PR2qFF9-_3k?usp=sharing
+
 ## 🛠️ Built With
 
 - **[LangGraph](https://github.com/langchain-ai/langgraph)** - Workflow orchestration

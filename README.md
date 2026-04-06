@@ -389,8 +389,6 @@ Ticket-triage-system/
 ├── requirements.txt     # Python dependencies
 └── README.md            # This file
 ```
-## 📷 Loom Video
-https://www.loom.com/share/8fb6eb26d4b34036bf74987c9ab6a274
 
 ## 🛠️ Built With
 
